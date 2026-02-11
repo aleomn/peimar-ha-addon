@@ -333,6 +333,70 @@ class PeimarTester():
         self.mqttc.publish("peimar/history/options", json.dumps(mesi_disponibili), retain=True)
         self.log(f"✅ Inviata lista di {len(mesi_disponibili)} mesi a Home Assistant")
     
+    def run(self):
+        self.login()
+        self.setup_discovery()
+        time.sleep(2)
+        self.mqttc.subscribe("homeassistant/input_select/peimar_history_period/set")
+    
+    # CARICAMENTO STORIA
+        storia = self.load_local_history()
+    
+    # Se la storia è vuota o il file ha solo {}, scarica tutto
+        if not storia or len(storia) == 0:
+            storia = self.fetch_full_history(start_year=2022)
+            if storia:
+                self.save_local_history(storia)
+            else:
+                self.log("⚠️ Attenzione: Il recupero dati non ha prodotto risultati.")
+
+        self.print_ordered_history(storia)
+        self.update_ha_menu(storia)
+              
+        last_processed_ts = 0   # Per ricordare l'ultima lettura utile
+    
+        while True:
+            # Aggiornamento programmato
+            ora_attuale = datetime.now().strftime("%H:%M")
+            if ora_attuale == "00:05":
+                self.log("📅 Aggiornamento programmato dello storico...")
+                nuova_storia = self.fetch_full_history(start_year=2022)
+                self.save_local_history(nuova_storia)
+                self.update_ha_menu(nuova_storia)
+                time.sleep(60) 
+        
+            if datetime.now() - self.last_login > timedelta(hours=6):
+                self.login()
+        
+            self.fetch_data()
+        
+            current_ts = self.live.get("updateDate", 0)
+            # Aggiunto spazio e controllo di sicurezza
+            ultimo_aggiornamento = datetime.fromtimestamp(current_ts / 1000.0).strftime('%H:%M:%S') if current_ts else "N/D"
+                
+            if current_ts > last_processed_ts:
+                # --- DATI NUOVI TROVATI ---
+                self.process_and_publish() 
+                last_processed_ts = current_ts
+            
+                next_update_time = (current_ts / 1000.0) + 315
+                sleep_time = int(next_update_time - time.time())
+            
+                if sleep_time < 10:
+                    sleep_time = 10
+                
+                self.log(f"✨ Dati sincronizzati (Orario portale: {ultimo_aggiornamento})")
+                self.log(f"⏳ Prossimo controllo tra {int(sleep_time)} secondi.")
+            
+                for _ in range(sleep_time):
+                    time.sleep(1)
+            else:
+                # --- DATI ANCORA VECCHI (Else ora è allineato correttamente) ---
+                self.log("⏳ Il portale non ha ancora rilasciato nuovi dati. Riprovo tra 30 secondi...")
+                for _ in range(30):
+                    time.sleep(1)
+
+    
     def process_and_publish(self):
         # Conversione orario
         raw_ts = self.live.get("updateDate")
@@ -427,84 +491,12 @@ class PeimarTester():
 
 
 if __name__ == "__main__":
-    tester = PeimarTester()
-    tester.login()
-    tester.setup_discovery()
-    time.sleep(2)
-    tester.mqttc.subscribe("homeassistant/input_select/peimar_history_period/set")
-    #tester.log("Elenco mesi inviato a Home Assistant")
-
-    # CARICAMENTO STORIA
-    storia = tester.load_local_history()
-    
-    # Se la storia è vuota o il file ha solo {}, scarica tutto
-    if not storia or len(storia) == 0:
-        storia = tester.fetch_full_history(start_year=2022)
-        if storia:
-            tester.save_local_history(storia)
-        else:
-            tester.log("⚠️ Attenzione: Il recupero dati non ha prodotto risultati.")
-
-    tester.print_ordered_history(storia)
-    tester.update_ha_menu(storia)
-              
-    last_processed_ts = 0   # Per ricordare l'ultima lettura utile
-    
-    while True:
-        
-        # Ogni giorno alle 00:05, aggiorna il file history.json per includere il nuovo mese o i dati corretti
-        ora_attuale = datetime.now().strftime("%H:%M")
-        if ora_attuale == "00:05":
-             tester.log("📅 Aggiornamento programmato dello storico...")
-             nuova_storia = tester.fetch_full_history(start_year=2022)
-             tester.save_local_history(nuova_storia)
-             tester.update_ha_menu(nuova_storia)
-             time.sleep(60) # Evita di rieseguire l'aggiornamento nello stesso minuto
-        
-        # 1. Controllo Login (ogni 6 ore)
-        if datetime.now() - tester.last_login > timedelta(hours=6):
-            tester.login()
-        
-        # 2. Scarichiamo i dati per controllare se c'è un aggiornamento
-        tester.fetch_data()
-        
-        # current_ts è il timestamp "updateDate" del portale (in millisecondi)
-        current_ts = tester.live.get("updateDate", 0)
-        ultimo_aggiornamento = datetime.fromtimestamp(current_ts / 1000.0).strftime('%H:%M:%S') if current_ts else "N/D"
-               
-        if current_ts > last_processed_ts:
-            # --- DATI NUOVI TROVATI ---
-            tester.process_and_publish() 
-            last_processed_ts = current_ts
-            
-            # Calcoliamo l'orario del prossimo aggiornamento desiderato:
-            # (Timestamp ultimo dato + 5 minuti e 15 secondi)
-            # 5 min 15 sec = 315 secondi
-            next_update_time = (current_ts / 1000.0) + 315
-            
-            # Calcoliamo quanto tempo dobbiamo dormire da "adesso"
-            sleep_time = int(next_update_time - time.time())
-            
-            # Se per qualche motivo il calcolo è negativo (es. ritardi di rete), 
-            # mettiamo un minimo di 10 secondi
-            if sleep_time < 10:
-                sleep_time = 10
-                
-            tester.log(f"✨ Dati sincronizzati (Orario portale: {ultimo_aggiornamento})")
-            tester.log(f"⏳ Prossimo controllo tra {int(sleep_time)} secondi (5m 15s dopo l'ultimo update).")
-            
-            # --- ATTESA REATTIVA ---
-            # Invece di un unico sleep, facciamo tanti piccoli passi da 1 secondo
-            for _ in range(sleep_time):
-                time.sleep(1)
-                # Qui il loop MQTT (loop_start) continua a girare in background
-                # e gestirà on_message istantaneamente.
-        else:
-            # --- DATI ANCORA VECCHI ---
-            tester.log("⏳ Il portale non ha ancora rilasciato nuovi dati. Riprovo tra 30 secondi...")
-            # Anche qui, meglio dividere l'attesa per non bloccare lo storico
-            for _ in range(30):
-                time.sleep(1)
-
+    bridge = PeimarTester()
+    try:
+        bridge.run()
+    except KeyboardInterrupt:
+        print("Interrotto dall'utente")
+    except Exception as e:
+        print(f"Errore fatale: {e}")
     
     
