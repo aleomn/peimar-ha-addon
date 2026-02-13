@@ -256,7 +256,7 @@ class PeimarTester():
                     
                     # DEEP DEBUG: Vediamo la prima risposta utile
                     if year == start_year and month == 1:
-                        self.log(f"🔍 DEBUG Risposta Portale: {resp_data}")
+                        #self.log(f"🔍 DEBUG Risposta Portale: {resp_data}")
 
                     data = resp_data.get("viewBean", {})
                     if data and any(v is not None for v in [data.get("pvElec"), data.get("useElec")]):
@@ -426,8 +426,7 @@ class PeimarTester():
         energy_consumption_today = self.clean_value(self.raw.get("todayLoadEnergyStr"))
         # print("Energia Consumata oggi", energy_consumption_today)
         battery_voltage = self.raw.get("batVolt")
-        print(battery_voltage)
-
+        
         # Mappatura
         mapping = {
             # ======== FOTOVOLTAICO ======================
