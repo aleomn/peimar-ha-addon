@@ -1,5 +1,5 @@
 name: "Peimar Inverter Bridge"
-version: "1.1.1"
+version: "1.1.2"
 slug: "peimar_bridge"
 description: "Recupero dati Inverter Peimar via MQTT"
 arch:
